@@ -1,5 +1,5 @@
 [phases.setup]
-nixPkgs = ["chromium"]
+nixPkgs = ["nodejs", "npm", "chromium"]
 aptPkgs = [
   "wget", "gnupg", "ca-certificates", "libxss1", 
   "libnss3", "libasound2t64", "libatk-bridge2.0-0", 
