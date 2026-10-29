@@ -1,4 +1,5 @@
 [phases.setup]
+nixPkgs = ["chromium"]
 aptPkgs = [
   "wget", "gnupg", "ca-certificates", "libxss1", 
   "libnss3", "libasound2t64", "libatk-bridge2.0-0", 
@@ -8,3 +9,8 @@ aptPkgs = [
   "libxdamage1", "libxfixes3", "libxrandr2", 
   "xdg-utils", "xvfb"
 ]
+
+[variables]
+CHROME_PATH = "/nix/var/nix/profiles/default/bin/chromium"
+PUPPETEER_EXECUTABLE_PATH = "/nix/var/nix/profiles/default/bin/chromium"
+PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = "true"
