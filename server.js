@@ -15,19 +15,50 @@ const port = process.env.PORT || 3000;
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
+/* ================= CLOUDFLARE WAF BYPASS TLS AGENT ================= */
+// Node.js බව සඟවා Real Browser එකක TLS Fingerprint එකක් යැවීම
 const sslAgent = new https.Agent({
   rejectUnauthorized: false,
   keepAlive: true,
-  secureOptions: crypto.constants.SSL_OP_LEGACY_SERVER_CONNECT,
+  ciphers: [
+    "TLS_AES_128_GCM_SHA256",
+    "TLS_AES_256_GCM_SHA384",
+    "TLS_CHACHA20_POLY1305_SHA256",
+    "ECDHE-ECDSA-AES128-GCM-SHA256",
+    "ECDHE-RSA-AES128-GCM-SHA256",
+    "ECDHE-ECDSA-AES256-GCM-SHA384",
+    "ECDHE-RSA-AES256-GCM-SHA384",
+    "ECDHE-ECDSA-CHACHA20-POLY1305",
+    "ECDHE-RSA-CHACHA20-POLY1305",
+    "ECDHE-RSA-AES128-SHA",
+    "ECDHE-RSA-AES256-SHA",
+    "AES128-GCM-SHA256",
+    "AES256-GCM-SHA384",
+    "AES128-SHA",
+    "AES256-SHA",
+  ].join(":"),
+  honorCipherOrder: true,
+  minVersion: "TLSv1.2",
+  maxVersion: "TLSv1.3",
+  secureOptions:
+    crypto.constants.SSL_OP_LEGACY_SERVER_CONNECT |
+    crypto.constants.SSL_OP_NO_TICKET,
 });
 
+/* ================= REAL BROWSER HEADERS ================= */
 const defaultHeaders = {
-  "User-Agent":
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-  Accept:
-    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
   "Accept-Language": "en-US,en;q=0.9",
-  Connection: "keep-alive",
+  "sec-ch-ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+  "sec-ch-ua-mobile": "?0",
+  "sec-ch-ua-platform": '"Windows"',
+  "Sec-Fetch-Dest": "document",
+  "Sec-Fetch-Mode": "navigate",
+  "Sec-Fetch-Site": "cross-site",
+  "Sec-Fetch-User": "?1",
+  "Upgrade-Insecure-Requests": "1",
+  "Connection": "keep-alive",
 };
 
 function decodeHtmlEntities(str = "") {
@@ -164,10 +195,10 @@ async function resolveDirectLinks(streamUrl) {
   targetLink = targetLink.replace(/(server\d+\/)\d+:\//, "$1");
 
   const serverMatch = targetLink.match(/\/server(\d+)\//) || targetLink.match(/server(\d+)/);
-  const detectedServer = serverMatch ? serverMatch[1] : "2";
+  const detectedServer = serverMatch ? serverMatch[1] : "7";
 
   const serversToTry = [detectedServer];
-  ["2", "7", "1", "3", "4", "5", "6", "8", "9", "11", "21"].forEach((s) => {
+  ["7", "2", "1", "3", "4", "5", "6", "8", "9", "11", "21"].forEach((s) => {
     if (!serversToTry.includes(s)) serversToTry.push(s);
   });
 
@@ -189,13 +220,13 @@ async function resolveDirectLinks(streamUrl) {
       const baseHeaders = {
         ...defaultHeaders,
         Host: parsedUrl.host,
-        Referer: `${domain}/`,
+        Referer: "https://cinesubz.co/", // Important to bypass 403
       };
 
       const initialRes = await axios.get(movieUrl, {
         httpsAgent: sslAgent,
         headers: baseHeaders,
-        timeout: 10000,
+        timeout: 12000,
       });
 
       let cookieHeader = "";
@@ -215,12 +246,13 @@ async function resolveDirectLinks(streamUrl) {
         try {
           const apiResponse = await axios.get(apiUrl, {
             httpsAgent: sslAgent,
-            timeout: 10000,
+            timeout: 12000,
             headers: {
               ...baseHeaders,
               Accept: "application/json, text/plain, */*",
               Referer: movieUrl,
               Cookie: cookieHeader,
+              "Sec-Fetch-Site": "same-origin",
             },
           });
 
@@ -237,7 +269,7 @@ async function resolveDirectLinks(streamUrl) {
 
             const pageResponse = await axios.get(realPageUrl, {
               httpsAgent: sslAgent,
-              timeout: 10000,
+              timeout: 12000,
               headers: {
                 ...baseHeaders,
                 Referer: movieUrl,
@@ -283,7 +315,7 @@ async function resolveDirectLinks(streamUrl) {
             httpsAgent: sslAgent,
             headers: postHeaders,
             responseType: "arraybuffer",
-            timeout: 10000,
+            timeout: 12000,
           });
 
           const responseText = Buffer.from(dlResponse.data).toString("utf8");
@@ -310,7 +342,7 @@ async function resolveDirectLinks(streamUrl) {
               } catch (_) {}
             }
           }
-        } catch (_) {}
+        } catch (_) {} // Skip payload 404s
       }
 
       if (resolved.length > 0) {
@@ -378,5 +410,5 @@ app.post("/api/resolve", async (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`🚀 CineSubz Native Web App active on port ${port}`);
+  console.log(`🚀 CineSubz Railway Resolver active on port ${port}`);
 });
