@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>CineSubz Resolver</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background: #0f172a; color: #f8fafc; padding: 20px; }
+    .container { max-width: 800px; margin: 0 auto; }
+    h1 { text-align: center; margin-bottom: 24px; color: #38bdf8; font-size: 26px; }
+    .search-box { display: flex; gap: 10px; margin-bottom: 24px; }
+    input[type="text"] { flex: 1; padding: 12px 16px; border-radius: 8px; border: 1px solid #334155; background: #1e293b; color: #fff; font-size: 16px; outline: none; }
+    input[type="text"]:focus { border-color: #38bdf8; }
+    button { padding: 12px 24px; background: #38bdf8; border: none; border-radius: 8px; color: #0f172a; font-weight: bold; cursor: pointer; }
+    button:hover { background: #7dd3fc; }
+    .card { background: #1e293b; border-radius: 10px; padding: 16px; margin-bottom: 12px; border: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; }
+    .card-info h3 { font-size: 16px; margin-bottom: 6px; }
+    .card-info p { font-size: 13px; color: #94a3b8; }
+    .modal { background: #1e293b; border-radius: 12px; padding: 20px; border: 1px solid #475569; margin-bottom: 24px; }
+    .btn-qual { display: block; width: 100%; text-align: left; padding: 12px; margin-top: 8px; background: #334155; border: 1px solid #475569; border-radius: 6px; color: #fff; cursor: pointer; }
+    .btn-qual:hover { background: #475569; border-color: #38bdf8; }
+    .result-box { background: #0b1120; padding: 16px; border-radius: 8px; border: 1px solid #22c55e; margin-top: 16px; word-break: break-all; }
+    .result-box a { color: #4ade80; text-decoration: none; font-weight: bold; }
+    .logs { background: #000; padding: 12px; border-radius: 6px; font-family: monospace; font-size: 12px; color: #94a3b8; margin-top: 16px; max-height: 150px; overflow-y: auto; }
+    .loader { text-align: center; padding: 20px; color: #38bdf8; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🎬 CineSubz Direct Link Resolver</h1>
+    
+    <div class="search-box">
+      <input type="text" id="query" placeholder="Enter movie name (e.g. Minions, Spider-Man)..." onkeydown="if(event.key==='Enter') searchMovie()">
+      <button onclick="searchMovie()">Search</button>
+    </div>
+
+    <div id="status"></div>
+    <div id="movieSection"></div>
+    <div id="resultSection"></div>
+    <div id="listSection"></div>
+  </div>
+
+  <script>
+    async function searchMovie() {
+      const q = document.getElementById("query").value.trim();
+      if (!q) return;
+
+      document.getElementById("status").innerHTML = '<div class="loader">🔍 Searching CineSubz...</div>';
+      document.getElementById("listSection").innerHTML = "";
+      document.getElementById("movieSection").innerHTML = "";
+      document.getElementById("resultSection").innerHTML = "";
+
+      try {
+        const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+        const json = await res.json();
+        document.getElementById("status").innerHTML = "";
+
+        if (!json.success || json.data.length === 0) {
+          document.getElementById("status").innerHTML = '<p style="color:#ef4444;text-align:center;">No movies found.</p>';
+          return;
+        }
+
+        let html = '';
+        json.data.forEach(item => {
+          html += `
+            <div class="card">
+              <div class="card-info">
+                <h3>${item.title}</h3>
+                <p>⭐ IMDb: ${item.imdb} | 📊 Quality: ${item.quality}</p>
+              </div>
+              <button onclick="loadQualities('${encodeURIComponent(item.url)}')">Select</button>
+            </div>
+          `;
+        });
+        document.getElementById("listSection").innerHTML = html;
+      } catch (e) {
+        document.getElementById("status").innerHTML = `<p style="color:#ef4444;">Error: ${e.message}</p>`;
+      }
+    }
+
+    async function loadQualities(encodedUrl) {
+      const movieUrl = decodeURIComponent(encodedUrl);
+      document.getElementById("status").innerHTML = '<div class="loader">⏳ Fetching Qualities & Stream Links...</div>';
+      document.getElementById("resultSection").innerHTML = "";
+
+      try {
+        const res = await fetch("/api/movie", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ movieUrl })
+        });
+        const json = await res.json();
+        document.getElementById("status").innerHTML = "";
+
+        if (!json.success || json.downloadLinks.length === 0) {
+          document.getElementById("status").innerHTML = '<p style="color:#ef4444;">No download qualities found.</p>';
+          return;
+        }
+
+        let html = `<div class="modal"><h2>${json.title}</h2><p style="color:#94a3b8;margin-bottom:12px;">Choose a quality to decrypt final link:</p>`;
+        json.downloadLinks.forEach(dl => {
+          html += `<button class="btn-qual" onclick="resolveLink('${encodeURIComponent(dl.directUrl)}')">${dl.quality}</button>`;
+        });
+        html += `</div>`;
+        document.getElementById("movieSection").innerHTML = html;
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } catch (e) {
+        document.getElementById("status").innerHTML = `<p style="color:#ef4444;">Error: ${e.message}</p>`;
+      }
+    }
+
+    async function resolveLink(encodedStreamUrl) {
+      const streamUrl = decodeURIComponent(encodedStreamUrl);
+      document.getElementById("status").innerHTML = '<div class="loader">⚡ Decrypting AES Payloads from Server...</div>';
+      document.getElementById("resultSection").innerHTML = "";
+
+      try {
+        const res = await fetch("/api/resolve", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ streamUrl })
+        });
+        const json = await res.json();
+        document.getElementById("status").innerHTML = "";
+
+        if (json.success && json.links.length > 0) {
+          let html = `<div class="result-box"><h3>✅ Direct Download Links Ready (${json.server})</h3><br>`;
+          json.links.forEach((l, idx) => {
+            html += `<p style="margin-bottom:8px;">[${idx+1}] <a href="${l.url}" target="_blank">${l.url}</a></p>`;
+          });
+          html += `</div>`;
+
+          if (json.logs && json.logs.length) {
+            html += `<div class="logs"><b>Execution Trace:</b><br>${json.logs.join("<br>")}</div>`;
+          }
+          document.getElementById("resultSection").innerHTML = html;
+        } else {
+          document.getElementById("resultSection").innerHTML = `<div style="color:#ef4444;background:#1e293b;padding:16px;border-radius:8px;">❌ Decryption Failed: ${json.error}</div>`;
+        }
+      } catch (e) {
+        document.getElementById("status").innerHTML = `<p style="color:#ef4444;">Error: ${e.message}</p>`;
+      }
+    }
+  </script>
+</body>
+</html>
