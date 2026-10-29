@@ -100,7 +100,7 @@ async function scrapeQualities(movieUrl) {
   return { title, downloadLinks };
 }
 
-/* ================= 3. RESOLVE USING PUPPETEER-REAL-BROWSER (DEEP LOGGING) ================= */
+/* ================= 3. RESOLVE USING PUPPETEER-REAL-BROWSER ================= */
 async function resolveViaRealBrowser(streamUrl) {
   let targetLink = streamUrl.replace(/^https:\/\/[^\/]+/, "https://drive.csplayer2.space");
   
@@ -108,13 +108,18 @@ async function resolveViaRealBrowser(streamUrl) {
   let browserInstance = null;
   const discoveredLinks = [];
 
+  // Get the Chrome path from Nixpacks environment variable
+  const chromeExecutable = process.env.CHROME_PATH || "/nix/var/nix/profiles/default/bin/chromium";
+
   try {
-    logs.push("[PRB] Initializing Real Browser & Xvfb Display...");
+    logs.push(`[PRB] Initializing Real Browser & Xvfb Display...`);
+    logs.push(`[PRB] Using Chrome Path: ${chromeExecutable}`);
     
     const { browser, page } = await connect({
-      headless: false, // Essential for WAF Bypass
-      turnstile: true, // Auto bypass Turnstile
-      disableXvfb: false, // Virtual display on Linux
+      headless: false,
+      turnstile: true,
+      disableXvfb: false,
+      executablePath: chromeExecutable, // Explicitly force the Browser path!
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -129,7 +134,6 @@ async function resolveViaRealBrowser(streamUrl) {
     browserInstance = browser;
     logs.push("✅ Browser launched successfully!");
 
-    // Catch Browser Console Logs
     page.on('console', msg => {
       const text = msg.text();
       if (!text.includes('ERR_BLOCKED_BY_CLIENT') && !text.includes('favicon')) {
@@ -137,17 +141,14 @@ async function resolveViaRealBrowser(streamUrl) {
       }
     });
 
-    // Catch Page Errors
     page.on('pageerror', err => {
       logs.push(`[BROWSER JS ERROR] ${err.toString()}`);
     });
 
-    // Block DisableDevtool JS from kicking out the scraper
     await page.evaluateOnNewDocument(() => {
       window.DisableDevtool = function() {};
     });
 
-    // Intercept Network Requests to catch the Decrypted Stream Link
     await page.setRequestInterception(true);
     
     page.on('request', request => {
@@ -177,18 +178,14 @@ async function resolveViaRealBrowser(streamUrl) {
     await page.goto(targetLink, { waitUntil: 'domcontentloaded', timeout: 60000 });
     logs.push("🌐 Page Loaded. Waiting for Cloudflare Validation...");
 
-    // Wait for JS execution and Turnstile validation
     await new Promise(resolve => setTimeout(resolve, 8000));
 
     logs.push("🔍 Searching for Direct Download Buttons...");
 
-    // Find all direct download buttons
     const buttons = await page.$$('.direct-download, .telegram-download');
     
     if (buttons.length === 0) {
        logs.push("❌ No download buttons found! Possible Cloudflare block or Dead Link.");
-       const pageHTML = await page.evaluate(() => document.body.innerHTML.substring(0, 300));
-       logs.push(`[PAGE PREVIEW]: ${pageHTML}...`);
     } else {
        logs.push(`✅ Found ${buttons.length} Download Buttons. Attempting Click...`);
        for (let i = 0; i < buttons.length; i++) {
