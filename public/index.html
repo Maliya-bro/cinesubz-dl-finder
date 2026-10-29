@@ -2,43 +2,49 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>CineSubz Resolver</title>
+  <title>CineSubz Link Resolver</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    body { background: #0f172a; color: #f8fafc; padding: 20px; }
-    .container { max-width: 800px; margin: 0 auto; }
-    h1 { text-align: center; margin-bottom: 24px; color: #38bdf8; font-size: 26px; }
-    .search-box { display: flex; gap: 10px; margin-bottom: 24px; }
-    input[type="text"] { flex: 1; padding: 12px 16px; border-radius: 8px; border: 1px solid #334155; background: #1e293b; color: #fff; font-size: 16px; outline: none; }
+    body { background: #090d16; color: #f1f5f9; padding: 20px; }
+    .container { max-width: 820px; margin: 0 auto; }
+    h1 { text-align: center; color: #38bdf8; margin-bottom: 24px; font-size: 24px; }
+    .search-panel { display: flex; gap: 10px; margin-bottom: 24px; }
+    input[type="text"] { flex: 1; padding: 12px 16px; border-radius: 8px; border: 1px solid #1e293b; background: #131b2e; color: #fff; font-size: 15px; outline: none; }
     input[type="text"]:focus { border-color: #38bdf8; }
-    button { padding: 12px 24px; background: #38bdf8; border: none; border-radius: 8px; color: #0f172a; font-weight: bold; cursor: pointer; }
-    button:hover { background: #7dd3fc; }
-    .card { background: #1e293b; border-radius: 10px; padding: 16px; margin-bottom: 12px; border: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; }
-    .card-info h3 { font-size: 16px; margin-bottom: 6px; }
-    .card-info p { font-size: 13px; color: #94a3b8; }
-    .modal { background: #1e293b; border-radius: 12px; padding: 20px; border: 1px solid #475569; margin-bottom: 24px; }
-    .btn-qual { display: block; width: 100%; text-align: left; padding: 12px; margin-top: 8px; background: #334155; border: 1px solid #475569; border-radius: 6px; color: #fff; cursor: pointer; }
-    .btn-qual:hover { background: #475569; border-color: #38bdf8; }
-    .result-box { background: #0b1120; padding: 16px; border-radius: 8px; border: 1px solid #22c55e; margin-top: 16px; word-break: break-all; }
-    .result-box a { color: #4ade80; text-decoration: none; font-weight: bold; }
-    .logs { background: #000; padding: 12px; border-radius: 6px; font-family: monospace; font-size: 12px; color: #94a3b8; margin-top: 16px; max-height: 150px; overflow-y: auto; }
-    .loader { text-align: center; padding: 20px; color: #38bdf8; font-weight: bold; }
+    button { padding: 12px 24px; background: #0284c7; border: none; border-radius: 8px; color: #fff; font-weight: bold; cursor: pointer; transition: 0.2s; }
+    button:hover { background: #0369a1; }
+    .card { background: #131b2e; border: 1px solid #1e293b; border-radius: 10px; padding: 14px 18px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }
+    .card h3 { font-size: 15px; margin-bottom: 4px; }
+    .card p { font-size: 13px; color: #94a3b8; }
+    .btn-select { padding: 8px 16px; background: #334155; border-radius: 6px; border: none; color: #38bdf8; cursor: pointer; }
+    .btn-select:hover { background: #475569; }
+    .modal-qual { background: #131b2e; border: 1px solid #38bdf8; border-radius: 10px; padding: 20px; margin-bottom: 20px; }
+    .btn-qual { display: block; width: 100%; text-align: left; padding: 12px 16px; margin-top: 8px; background: #1e293b; border: 1px solid #334155; border-radius: 6px; color: #fff; cursor: pointer; font-size: 14px; }
+    .btn-qual:hover { background: #334155; border-color: #38bdf8; }
+    .result-box { background: #0b1324; border: 1px solid #10b981; border-radius: 8px; padding: 16px; margin-bottom: 20px; }
+    .result-box h3 { color: #10b981; margin-bottom: 12px; font-size: 16px; }
+    .result-item { background: #131d33; padding: 10px 14px; border-radius: 6px; margin-bottom: 8px; word-break: break-all; }
+    .result-item a { color: #38bdf8; font-size: 13px; text-decoration: none; }
+    .result-item a:hover { text-decoration: underline; }
+    .logs-panel { background: #050811; border: 1px solid #1e293b; border-radius: 6px; padding: 12px; font-family: monospace; font-size: 12px; color: #64748b; max-height: 160px; overflow-y: auto; margin-top: 10px; }
+    .loader { text-align: center; color: #38bdf8; padding: 16px; font-size: 14px; }
+    .error-msg { background: #451a1a; color: #f87171; padding: 12px 16px; border-radius: 6px; border: 1px solid #7f1d1d; margin-bottom: 16px; font-size: 14px; }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>🎬 CineSubz Direct Link Resolver</h1>
-    
-    <div class="search-box">
-      <input type="text" id="query" placeholder="Enter movie name (e.g. Minions, Spider-Man)..." onkeydown="if(event.key==='Enter') searchMovie()">
+    <h1>🎬 CineSubz Direct Link Resolver (Native Engine)</h1>
+
+    <div class="search-panel">
+      <input type="text" id="query" placeholder="Enter movie title (e.g. Spider-Man, Minions)..." onkeydown="if(event.key==='Enter') searchMovie()">
       <button onclick="searchMovie()">Search</button>
     </div>
 
-    <div id="status"></div>
-    <div id="movieSection"></div>
-    <div id="resultSection"></div>
-    <div id="listSection"></div>
+    <div id="loaderArea"></div>
+    <div id="resultArea"></div>
+    <div id="qualityArea"></div>
+    <div id="movieList"></div>
   </div>
 
   <script>
@@ -46,18 +52,18 @@
       const q = document.getElementById("query").value.trim();
       if (!q) return;
 
-      document.getElementById("status").innerHTML = '<div class="loader">🔍 Searching CineSubz...</div>';
-      document.getElementById("listSection").innerHTML = "";
-      document.getElementById("movieSection").innerHTML = "";
-      document.getElementById("resultSection").innerHTML = "";
+      document.getElementById("loaderArea").innerHTML = '<div class="loader">🔍 Searching CineSubz...</div>';
+      document.getElementById("resultArea").innerHTML = "";
+      document.getElementById("qualityArea").innerHTML = "";
+      document.getElementById("movieList").innerHTML = "";
 
       try {
         const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
         const json = await res.json();
-        document.getElementById("status").innerHTML = "";
+        document.getElementById("loaderArea").innerHTML = "";
 
         if (!json.success || json.data.length === 0) {
-          document.getElementById("status").innerHTML = '<p style="color:#ef4444;text-align:center;">No movies found.</p>';
+          document.getElementById("movieList").innerHTML = '<div class="error-msg">No results found for your query.</div>';
           return;
         }
 
@@ -65,24 +71,25 @@
         json.data.forEach(item => {
           html += `
             <div class="card">
-              <div class="card-info">
+              <div>
                 <h3>${item.title}</h3>
-                <p>⭐ IMDb: ${item.imdb} | 📊 Quality: ${item.quality}</p>
+                <p>⭐ IMDb: ${item.imdb || 'N/A'} | 📊 Quality: ${item.quality || 'N/A'}</p>
               </div>
-              <button onclick="loadQualities('${encodeURIComponent(item.url)}')">Select</button>
+              <button class="btn-select" onclick="getQualities('${encodeURIComponent(item.url)}')">Select</button>
             </div>
           `;
         });
-        document.getElementById("listSection").innerHTML = html;
+        document.getElementById("movieList").innerHTML = html;
       } catch (e) {
-        document.getElementById("status").innerHTML = `<p style="color:#ef4444;">Error: ${e.message}</p>`;
+        document.getElementById("loaderArea").innerHTML = `<div class="error-msg">Error: ${e.message}</div>`;
       }
     }
 
-    async function loadQualities(encodedUrl) {
+    async function getQualities(encodedUrl) {
       const movieUrl = decodeURIComponent(encodedUrl);
-      document.getElementById("status").innerHTML = '<div class="loader">⏳ Fetching Qualities & Stream Links...</div>';
-      document.getElementById("resultSection").innerHTML = "";
+      document.getElementById("loaderArea").innerHTML = '<div class="loader">⏳ Fetching available qualities...</div>';
+      document.getElementById("resultArea").innerHTML = "";
+      document.getElementById("qualityArea").innerHTML = "";
 
       try {
         const res = await fetch("/api/movie", {
@@ -91,55 +98,77 @@
           body: JSON.stringify({ movieUrl })
         });
         const json = await res.json();
-        document.getElementById("status").innerHTML = "";
+        document.getElementById("loaderArea").innerHTML = "";
 
         if (!json.success || json.downloadLinks.length === 0) {
-          document.getElementById("status").innerHTML = '<p style="color:#ef4444;">No download qualities found.</p>';
+          document.getElementById("qualityArea").innerHTML = '<div class="error-msg">No qualities available for this title.</div>';
           return;
         }
 
-        let html = `<div class="modal"><h2>${json.title}</h2><p style="color:#94a3b8;margin-bottom:12px;">Choose a quality to decrypt final link:</p>`;
-        json.downloadLinks.forEach(dl => {
-          html += `<button class="btn-qual" onclick="resolveLink('${encodeURIComponent(dl.directUrl)}')">${dl.quality}</button>`;
+        let html = `
+          <div class="modal-qual">
+            <h3>${json.title}</h3>
+            <p style="font-size:13px; font-weight:bold; color:#38bdf8; margin-top:8px;">Choose quality to resolve final link:</p>
+        `;
+
+        json.downloadLinks.forEach(item => {
+          html += `<button class="btn-qual" onclick="resolveDownloadLink('${encodeURIComponent(item.directUrl)}')">📥 ${item.quality}</button>`;
         });
+
         html += `</div>`;
-        document.getElementById("movieSection").innerHTML = html;
+        document.getElementById("qualityArea").innerHTML = html;
         window.scrollTo({ top: 0, behavior: 'smooth' });
       } catch (e) {
-        document.getElementById("status").innerHTML = `<p style="color:#ef4444;">Error: ${e.message}</p>`;
+        document.getElementById("loaderArea").innerHTML = `<div class="error-msg">Error: ${e.message}</div>`;
       }
     }
 
-    async function resolveLink(encodedStreamUrl) {
-      const streamUrl = decodeURIComponent(encodedStreamUrl);
-      document.getElementById("status").innerHTML = '<div class="loader">⚡ Decrypting AES Payloads from Server...</div>';
-      document.getElementById("resultSection").innerHTML = "";
+    async function resolveDownloadLink(encodedDirectUrl) {
+      const directUrl = decodeURIComponent(encodedDirectUrl);
+      document.getElementById("loaderArea").innerHTML = '<div class="loader">⚡ Decrypting stream link from cloud servers...</div>';
+      document.getElementById("resultArea").innerHTML = "";
 
       try {
         const res = await fetch("/api/resolve", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ streamUrl })
+          body: JSON.stringify({ directUrl })
         });
         const json = await res.json();
-        document.getElementById("status").innerHTML = "";
+        document.getElementById("loaderArea").innerHTML = "";
 
         if (json.success && json.links.length > 0) {
-          let html = `<div class="result-box"><h3>✅ Direct Download Links Ready (${json.server})</h3><br>`;
-          json.links.forEach((l, idx) => {
-            html += `<p style="margin-bottom:8px;">[${idx+1}] <a href="${l.url}" target="_blank">${l.url}</a></p>`;
+          let html = `
+            <div class="result-box">
+              <h3>✅ Direct Stream Links Resolved (${json.server})</h3>
+          `;
+
+          json.links.forEach((l) => {
+            const isStorage = l.url.includes("cloudflarestorage") || l.url.includes(".mp4");
+            const label = isStorage ? "Direct Cloudflare MP4 Stream" : (l.url.includes("telegram") ? "Telegram Bot Link" : "Mirror Link");
+            html += `
+              <div class="result-item">
+                <span style="font-size:11px; color:#10b981; font-weight:bold;">[${label}]</span><br>
+                <a href="${l.url}" target="_blank" rel="noopener noreferrer">${l.url}</a>
+              </div>
+            `;
           });
-          html += `</div>`;
 
           if (json.logs && json.logs.length) {
-            html += `<div class="logs"><b>Execution Trace:</b><br>${json.logs.join("<br>")}</div>`;
+            html += `<div class="logs-panel"><b>Logs:</b><br>${json.logs.join("<br>")}</div>`;
           }
-          document.getElementById("resultSection").innerHTML = html;
+
+          html += `</div>`;
+          document.getElementById("resultArea").innerHTML = html;
         } else {
-          document.getElementById("resultSection").innerHTML = `<div style="color:#ef4444;background:#1e293b;padding:16px;border-radius:8px;">❌ Decryption Failed: ${json.error}</div>`;
+          let errHtml = `<div class="error-msg">❌ Decryption Failed: ${json.error || 'Unknown error'}</div>`;
+          if (json.logs && json.logs.length) {
+            errHtml += `<div class="logs-panel"><b>Trace:</b><br>${json.logs.join("<br>")}</div>`;
+          }
+          document.getElementById("resultArea").innerHTML = errHtml;
         }
       } catch (e) {
-        document.getElementById("status").innerHTML = `<p style="color:#ef4444;">Error: ${e.message}</p>`;
+        document.getElementById("loaderArea").innerHTML = `<div class="error-msg">Error: ${e.message}</div>`;
       }
     }
   </script>
