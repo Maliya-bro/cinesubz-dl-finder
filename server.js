@@ -1,7 +1,6 @@
 import express from "express";
-import { gotScraping } from "got-scraping";
-import { CookieJar } from "tough-cookie";
-import CryptoJS from "crypto-js";
+import axios from "axios";
+import { connect } from "puppeteer-real-browser";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -14,7 +13,10 @@ const port = process.env.PORT || 3000;
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
-/* ================= HELPER FUNCTIONS ================= */
+const defaultHeaders = {
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+};
+
 function decodeHtmlEntities(str = "") {
   return String(str)
     .replace(/&#8211;|&#8212;|&ndash;|&mdash;/g, "-")
@@ -25,300 +27,186 @@ function decodeHtmlEntities(str = "") {
     .trim();
 }
 
-/* ================= 1. NATIVE SEARCH ================= */
-async function nativeSearchCineSubz(query) {
+/* ================= 1. SEARCH ================= */
+async function searchMovie(query) {
   const formattedQuery = encodeURIComponent(query.trim()).replace(/%20/g, "+");
   const searchUrl = `https://cinesubz.co/?s=${formattedQuery}`;
 
-  // Let gotScraping handle all headers, TLS, and HTTP/2 automatically
-  const res = await gotScraping({
-    url: searchUrl,
-    headers: { Referer: "https://cinesubz.co/" },
-    timeout: { request: 15000 }
+  const res = await axios.get(searchUrl, {
+    timeout: 15000,
+    headers: { ...defaultHeaders, Referer: "https://cinesubz.co/" },
   });
 
-  const html = String(res.body || "");
+  const html = String(res.data || "");
   const results = [];
   const seenUrls = new Set();
   const parts = html.split(/<div id="item-\d+"\s+class="display-item">/i).slice(1);
 
   for (const block of parts) {
     const linkMatch = block.match(/<a\s+href="([^"]+)"[^>]*?(?:title="([^"]*)")?/i);
-    const h3Match =
-      block.match(/<div class="item-desc-title">\s*<h3>([\s\S]*?)<\/h3>/i) ||
-      block.match(/<h3>([\s\S]*?)<\/h3>/i);
-    const imgMatch = block.match(/<img[^>]+(?:data-original|src)="([^"]+)"/i);
+    const h3Match = block.match(/<div class="item-desc-title">\s*<h3>([\s\S]*?)<\/h3>/i) || block.match(/<h3>([\s\S]*?)<\/h3>/i);
     const imdbMatch = block.match(/<span class="imdb-score">([^<]+)<\/span>/i);
     const qualityMatch = block.match(/<span class="badge-(?:quality|season)-corner">([^<]+)<\/span>/i);
 
     const url = linkMatch ? linkMatch[1].trim() : null;
-    const rawTitle = (h3Match && h3Match[1]) || (linkMatch && linkMatch[2]) || "";
-    const title = decodeHtmlEntities(rawTitle);
-    const image = imgMatch ? imgMatch[1].trim() : "";
+    const title = decodeHtmlEntities((h3Match && h3Match[1]) || (linkMatch && linkMatch[2]) || "");
     const imdb = imdbMatch ? imdbMatch[1].trim() : "N/A";
     const quality = qualityMatch ? qualityMatch[1].trim() : "N/A";
 
     if (url && title && !seenUrls.has(url)) {
       seenUrls.add(url);
-      results.push({ title, url, image, imdb, quality });
+      results.push({ title, url, imdb, quality });
     }
   }
-
   return results;
 }
 
-/* ================= 2. MOVIE PAGE SCRAPER ================= */
-async function nativeScrapeMovie(movieUrl) {
-  const parsed = new URL(movieUrl);
-  const movieHost = parsed.origin;
-
-  const res = await gotScraping({
-    url: movieUrl,
-    headers: { Referer: `${movieHost}/` },
-    timeout: { request: 15000 }
+/* ================= 2. GET QUALITIES ================= */
+async function scrapeQualities(movieUrl) {
+  const res = await axios.get(movieUrl, {
+    timeout: 15000,
+    headers: defaultHeaders,
   });
 
-  const html = String(res.body || "");
+  const html = String(res.data || "");
   const titleMatch = html.match(/<title>([\s\S]*?)<\/title>/i);
-  const title = titleMatch
-    ? decodeHtmlEntities(titleMatch[1].replace(/- CineSubz.*$/i, ""))
-    : "Movie Details";
+  const title = titleMatch ? decodeHtmlEntities(titleMatch[1].replace(/- CineSubz.*$/i, "")) : "Movie Details";
 
   const downloadLinks = [];
   const seenUrls = new Set();
-  const btnRegex =
-    /<a[^>]+href=['"]([^'"]+)['"][^>]*class=['"][^'"]*movie-download-button[^'"]*['"][^>]*>([\s\S]*?)<\/a>/gi;
+  const btnRegex = /<a[^>]+href=['"]([^'"]+)['"][^>]*class=['"][^'"]*movie-download-button[^'"]*['"][^>]*>([\s\S]*?)<\/a>/gi;
   let match;
-  const buttonJobs = [];
 
   while ((match = btnRegex.exec(html)) !== null) {
     const rawLink = match[1].trim();
-    const innerHtml = match[2];
-    const metaMatch = innerHtml.match(/class=['"][^'"]*movie-download-meta[^'"]*['"][^>]*>([\s\S]*?)<\/span>/i);
-    const typeMatch = innerHtml.match(/class=['"][^'"]*movie-download-type[^'"]*['"][^>]*>([\s\S]*?)<\/span>/i);
+    const metaMatch = match[2].match(/class=['"][^'"]*movie-download-meta[^'"]*['"][^>]*>([\s\S]*?)<\/span>/i);
+    const qualityLabel = metaMatch ? decodeHtmlEntities(metaMatch[1]) : "Quality";
 
-    const qualityLabel = metaMatch
-      ? decodeHtmlEntities(metaMatch[1])
-      : typeMatch
-      ? decodeHtmlEntities(typeMatch[1])
-      : "Quality";
+    try {
+      const pageRes = await axios.get(rawLink, { headers: defaultHeaders, timeout: 10000 });
+      const pData = String(pageRes.data || "");
+      const pathMatch = pData.match(/(?:https?:\/\/(?:google\.com|sonic-cloud\.online|drive\.csplayer2\.space))?\/(server\d+\/[^\s'"<>]+\.mp4)/i);
 
-    buttonJobs.push(
-      (async () => {
-        try {
-          const pageRes = await gotScraping({
-            url: rawLink,
-            headers: { Referer: movieUrl },
-            timeout: { request: 12000 }
-          });
-          const pData = String(pageRes.body || "");
-          const pathMatch = pData.match(
-            /(?:https?:\/\/(?:google\.com|sonic-cloud\.online|drive\.csplayer2\.space))?\/(server\d+\/[^\s'"<>]+\.mp4)/i
-          );
-
-          if (pathMatch) {
-            let cleanPath = pathMatch[1].replace(/(server\d+\/)\d+:\//, "$1");
-            return {
-              quality: qualityLabel,
-              directUrl: `https://drive.csplayer2.space/${cleanPath}`,
-            };
-          }
-        } catch (_) {}
-        return null;
-      })()
-    );
+      if (pathMatch) {
+        let cleanPath = pathMatch[1].replace(/(server\d+\/)\d+:\//, "$1");
+        const directUrl = `https://drive.csplayer2.space/${cleanPath}`;
+        if (!seenUrls.has(directUrl)) {
+          seenUrls.add(directUrl);
+          downloadLinks.push({ quality: qualityLabel, directUrl });
+        }
+      }
+    } catch (_) {}
   }
-
-  const resolved = await Promise.all(buttonJobs);
-  for (const item of resolved) {
-    if (item && !seenUrls.has(item.directUrl)) {
-      seenUrls.add(item.directUrl);
-      downloadLinks.push(item);
-    }
-  }
-
   return { title, downloadLinks };
 }
 
-/* ================= 3. DIRECT DOWNLOAD RESOLVER (WAF BYPASSED) ================= */
-async function resolveDirectLinks(streamUrl) {
+/* ================= 3. RESOLVE USING PUPPETEER-REAL-BROWSER ================= */
+async function resolveViaRealBrowser(streamUrl) {
   let targetLink = streamUrl.replace(/^https:\/\/[^\/]+/, "https://drive.csplayer2.space");
-
-  const serverMatch = targetLink.match(/\/server(\d+)\//) || targetLink.match(/server(\d+)/);
-  const detectedServer = serverMatch ? serverMatch[1] : "7";
-
-  const serversToTry = [detectedServer, "7", "2", "1", "3", "4", "5", "6", "8", "9", "11", "21"];
-  const uniqueServers = [...new Set(serversToTry)];
-
-  const debugLogs = [];
-
-  for (const serverNum of uniqueServers) {
-    let movieUrl = targetLink;
-    if (serverMatch) {
-      movieUrl = movieUrl.replace(/\/server\d+\//, `/server${serverNum}/`);
-    }
-
-    debugLogs.push(`Testing Server #${serverNum} (${movieUrl})`);
-    
-    // CookieJar is crucial for Cloudflare turnstile & session persistency
-    const cookieJar = new CookieJar();
-
-    try {
-      const parsedUrl = new URL(movieUrl);
-      const domain = parsedUrl.origin;
-      const currentPath = parsedUrl.pathname + parsedUrl.search;
-
-      // 1. Initial Access to generate Cloudflare Cookies
-      const initialRes = await gotScraping({
-        url: movieUrl,
-        cookieJar,
-        headers: { Referer: "https://cinesubz.co/" },
-        timeout: { request: 12000 }
-      });
-
-      let html = String(initialRes.body || "");
-      let realPageUrl = movieUrl;
-      let payloads = html.match(/[0-9a-fA-F]{200,}/g) || [];
-
-      // 2. Download-Data API Call
-      if (payloads.length === 0) {
-        const apiUrl = `${domain}/api/download-data${currentPath}`;
-        try {
-          const apiResponse = await gotScraping({
-            url: apiUrl,
-            cookieJar,
-            headers: {
-              Accept: "application/json, text/plain, */*",
-              Referer: movieUrl
-            },
-            responseType: 'json',
-            timeout: { request: 12000 }
-          });
-
-          if (apiResponse.body && apiResponse.body.redirect) {
-            realPageUrl = apiResponse.body.redirect;
-            if (!realPageUrl.startsWith("http")) realPageUrl = domain + realPageUrl;
-
-            const pageResponse = await gotScraping({
-              url: realPageUrl,
-              cookieJar,
-              headers: { Referer: movieUrl },
-              timeout: { request: 12000 }
-            });
-            
-            html = String(pageResponse.body || "");
-            payloads = html.match(/[0-9a-fA-F]{200,}/g) || [];
-          } else {
-             debugLogs.push(`Server #${serverNum} API gave no redirect URL.`);
-          }
-        } catch (apiErr) {
-          debugLogs.push(`Server #${serverNum} API error: ${apiErr.response?.statusCode || apiErr.message}`);
-          continue;
-        }
-      }
-
-      if (payloads.length === 0) {
-        debugLogs.push(`Server #${serverNum}: No Hex Payloads extracted from HTML.`);
-        continue;
-      }
-
-      // Collect Keys
-      const allStrings = [...html.matchAll(/(["'])(.*?)\1/g)].map((m) => m[2]);
-      const keysToTry = [...new Set(allStrings)].filter((k) => k && k.length >= 4 && k.length <= 40);
-      keysToTry.push("kasun", "cinesubz.lk", "CSPlayer", "ravindu01manoj", "jhutmupd", "dgpjjitp");
-
-      const resolved = [];
-
-      // 3. Post Binary Payloads
-      for (const hexPayload of payloads) {
-        try {
-          const payloadBytes = Buffer.from(hexPayload, "hex");
-          
-          const dlResponse = await gotScraping({
-            url: realPageUrl,
-            method: 'POST',
-            body: payloadBytes,
-            cookieJar,
-            headers: {
-              "Content-Type": "application/octet-stream",
-              Referer: realPageUrl,
-              Origin: domain
-            },
-            responseType: "buffer",
-            timeout: { request: 12000 }
-          });
-
-          const responseText = dlResponse.body.toString("utf8");
-          const encryptedUrlMatch = responseText.match(/U2FsdGVkX1[a-zA-Z0-9+/=]+/);
-
-          if (encryptedUrlMatch) {
-            const encryptedUrl = encryptedUrlMatch[0];
-            for (const key of keysToTry) {
-              if (!key || key.length < 3) continue;
-              try {
-                const decryptedBytes = CryptoJS.AES.decrypt(encryptedUrl, key);
-                let decodedStr = decryptedBytes.toString(CryptoJS.enc.Utf8);
-
-                if (decodedStr && !decodedStr.startsWith("http")) {
-                  try {
-                    decodedStr = Buffer.from(decodedStr, "base64").toString("utf8");
-                  } catch (_) {}
-                }
-
-                if (decodedStr && decodedStr.startsWith("http")) {
-                  resolved.push({ key, url: decodedStr });
-                  break;
-                }
-              } catch (_) {}
-            }
-          }
-        } catch (_) {} // Ignore payload specific errors
-      }
-
-      if (resolved.length > 0) {
-        return {
-          success: true,
-          server: `server${serverNum}`,
-          links: resolved,
-          logs: debugLogs,
-        };
-      } else {
-        debugLogs.push(`Server #${serverNum}: Decryption failed using all keys.`);
-      }
-    } catch (err) {
-      debugLogs.push(`Server #${serverNum} failed: ${err.response?.statusCode || err.message}`);
-    }
-  }
-
-  return {
-    success: false,
-    error: "Failed to decrypt from all servers.",
-    logs: debugLogs,
-  };
-}
-
-/* ================= EXPRESS ENDPOINTS ================= */
-app.get("/api/search", async (req, res) => {
-  const query = req.query.q;
-  if (!query) return res.status(400).json({ error: "Query 'q' is required" });
+  
+  const logs = [`[PRB] Starting puppeteer-real-browser for: ${targetLink}`];
+  let browserInstance = null;
+  const discoveredLinks = [];
 
   try {
-    const data = await nativeSearchCineSubz(query);
-    res.json({ success: true, count: data.length, data: data.slice(0, 15) });
+    logs.push("Launching browser with Xvfb and Turnstile bypass...");
+    
+    // Connect handles headless bypass automatically
+    const { browser, page } = await connect({
+      headless: false, // MUST be false for real-browser to bypass Cloudflare correctly (Xvfb is used on Linux)
+      turnstile: true, // Automatically clicks Turnstile Cloudflare check
+      disableXvfb: false, // Ensure virtual display is enabled for Railway Linux
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--disable-gpu',
+        '--mute-audio'
+      ]
+    });
+    
+    browserInstance = browser;
+
+    // Block DisableDevtool JS from kicking out the scraper
+    await page.evaluateOnNewDocument(() => {
+      window.DisableDevtool = function() {};
+    });
+
+    // Intercept Network Requests to catch the Decrypted Stream Link
+    await page.setRequestInterception(true);
+    page.on('request', request => {
+      const url = request.url();
+      // Catch Cloudflare R2 links or fallback Telegram links
+      if (
+        (url.includes("cloudflarestorage.com") && url.includes(".mp4")) ||
+        url.includes("terracloud") ||
+        url.includes("pixeldrain") ||
+        url.includes("telegram.me") || 
+        url.includes("t.me")
+      ) {
+        logs.push(`✅ Captured Final Link: ${url}`);
+        discoveredLinks.push({ url });
+      }
+      request.continue();
+    });
+
+    logs.push("Navigating to target and waiting for Cloudflare...");
+    await page.goto(targetLink, { waitUntil: 'domcontentloaded', timeout: 60000 });
+
+    logs.push("Triggering JavaScript Decryption events...");
+
+    // Give Cloudflare Turnstile a few seconds to pass if challenged
+    await new Promise(resolve => setTimeout(resolve, 5000));
+
+    // Find all direct download buttons and click them to trigger the internal Protobuf API
+    const buttons = await page.$$('.direct-download, .telegram-download');
+    if (buttons.length === 0) {
+       logs.push("⚠️ No download buttons found on page. Cloudflare challenge might have failed.");
+    } else {
+       for (const btn of buttons) {
+         try {
+           await btn.click();
+           await new Promise(r => setTimeout(r, 1500)); 
+         } catch (e) {}
+       }
+    }
+
+    await browserInstance.close();
+
+    // Unique links only
+    const uniqueLinks = Array.from(new Set(discoveredLinks.map(l => l.url))).map(url => ({ url }));
+
+    if (uniqueLinks.length > 0) {
+      return { success: true, server: "Puppeteer-Real-Browser", links: uniqueLinks, logs };
+    } else {
+      return { success: false, error: "Cloudflare bypassed, but no stream URL was generated.", logs };
+    }
+
+  } catch (error) {
+    if (browserInstance) {
+        try { await browserInstance.close(); } catch(e){}
+    }
+    logs.push(`PRB Error: ${error.message}`);
+    return { success: false, error: error.message, logs };
+  }
+}
+
+/* ================= API ENDPOINTS ================= */
+app.get("/api/search", async (req, res) => {
+  if (!req.query.q) return res.status(400).json({ error: "Query required" });
+  try {
+    const data = await searchMovie(req.query.q);
+    res.json({ success: true, count: data.length, data });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }
 });
 
 app.post("/api/movie", async (req, res) => {
-  const { movieUrl } = req.body;
-  if (!movieUrl) return res.status(400).json({ error: "movieUrl is required" });
-
+  if (!req.body.movieUrl) return res.status(400).json({ error: "movieUrl required" });
   try {
-    const data = await nativeScrapeMovie(movieUrl);
-    if (!data.downloadLinks || data.downloadLinks.length === 0) {
-      return res.status(404).json({ success: false, error: "No download links discovered" });
-    }
+    const data = await scrapeQualities(req.body.movieUrl);
     res.json({ success: true, ...data });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
@@ -326,21 +214,15 @@ app.post("/api/movie", async (req, res) => {
 });
 
 app.post("/api/resolve", async (req, res) => {
-  const { directUrl } = req.body;
-  if (!directUrl) return res.status(400).json({ error: "directUrl is required" });
-
+  if (!req.body.directUrl) return res.status(400).json({ error: "directUrl required" });
   try {
-    const result = await resolveDirectLinks(directUrl);
-    if (result.success) {
-      res.json(result);
-    } else {
-      res.status(500).json(result);
-    }
+    const result = await resolveViaRealBrowser(req.body.directUrl);
+    res.json(result);
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }
 });
 
 app.listen(port, () => {
-  console.log(`🚀 CineSubz Railway Web App active on port ${port}`);
+  console.log(`🚀 CineSubz Real-Browser Engine running on port ${port}`);
 });
