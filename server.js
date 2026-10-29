@@ -1,8 +1,6 @@
 import express from "express";
-import axios from "axios";
+import { gotScraping } from "got-scraping";
 import CryptoJS from "crypto-js";
-import https from "https";
-import crypto from "crypto";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -15,52 +13,7 @@ const port = process.env.PORT || 3000;
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
-/* ================= CLOUDFLARE WAF BYPASS TLS AGENT ================= */
-// Node.js බව සඟවා Real Browser එකක TLS Fingerprint එකක් යැවීම
-const sslAgent = new https.Agent({
-  rejectUnauthorized: false,
-  keepAlive: true,
-  ciphers: [
-    "TLS_AES_128_GCM_SHA256",
-    "TLS_AES_256_GCM_SHA384",
-    "TLS_CHACHA20_POLY1305_SHA256",
-    "ECDHE-ECDSA-AES128-GCM-SHA256",
-    "ECDHE-RSA-AES128-GCM-SHA256",
-    "ECDHE-ECDSA-AES256-GCM-SHA384",
-    "ECDHE-RSA-AES256-GCM-SHA384",
-    "ECDHE-ECDSA-CHACHA20-POLY1305",
-    "ECDHE-RSA-CHACHA20-POLY1305",
-    "ECDHE-RSA-AES128-SHA",
-    "ECDHE-RSA-AES256-SHA",
-    "AES128-GCM-SHA256",
-    "AES256-GCM-SHA384",
-    "AES128-SHA",
-    "AES256-SHA",
-  ].join(":"),
-  honorCipherOrder: true,
-  minVersion: "TLSv1.2",
-  maxVersion: "TLSv1.3",
-  secureOptions:
-    crypto.constants.SSL_OP_LEGACY_SERVER_CONNECT |
-    crypto.constants.SSL_OP_NO_TICKET,
-});
-
-/* ================= REAL BROWSER HEADERS ================= */
-const defaultHeaders = {
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-  "Accept-Language": "en-US,en;q=0.9",
-  "sec-ch-ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-  "sec-ch-ua-mobile": "?0",
-  "sec-ch-ua-platform": '"Windows"',
-  "Sec-Fetch-Dest": "document",
-  "Sec-Fetch-Mode": "navigate",
-  "Sec-Fetch-Site": "cross-site",
-  "Sec-Fetch-User": "?1",
-  "Upgrade-Insecure-Requests": "1",
-  "Connection": "keep-alive",
-};
-
+/* ================= HELPER FUNCTIONS ================= */
 function decodeHtmlEntities(str = "") {
   return String(str)
     .replace(/&#8211;|&#8212;|&ndash;|&mdash;/g, "-")
@@ -76,13 +29,14 @@ async function nativeSearchCineSubz(query) {
   const formattedQuery = encodeURIComponent(query.trim()).replace(/%20/g, "+");
   const searchUrl = `https://cinesubz.co/?s=${formattedQuery}`;
 
-  const res = await axios.get(searchUrl, {
-    httpsAgent: sslAgent,
-    timeout: 15000,
-    headers: { ...defaultHeaders, Referer: "https://cinesubz.co/" },
+  // gotScraping automatically spoofs JA3 TLS and Chrome HTTP/2 headers
+  const res = await gotScraping({
+    url: searchUrl,
+    headers: { Referer: "https://cinesubz.co/" },
+    timeout: { request: 15000 }
   });
 
-  const html = String(res.data || "");
+  const html = String(res.body || "");
   const results = [];
   const seenUrls = new Set();
   const parts = html.split(/<div id="item-\d+"\s+class="display-item">/i).slice(1);
@@ -117,13 +71,13 @@ async function nativeScrapeMovie(movieUrl) {
   const parsed = new URL(movieUrl);
   const movieHost = parsed.origin;
 
-  const res = await axios.get(movieUrl, {
-    httpsAgent: sslAgent,
-    timeout: 15000,
-    headers: { ...defaultHeaders, Referer: `${movieHost}/` },
+  const res = await gotScraping({
+    url: movieUrl,
+    headers: { Referer: `${movieHost}/` },
+    timeout: { request: 15000 }
   });
 
-  const html = String(res.data || "");
+  const html = String(res.body || "");
   const titleMatch = html.match(/<title>([\s\S]*?)<\/title>/i);
   const title = titleMatch
     ? decodeHtmlEntities(titleMatch[1].replace(/- CineSubz.*$/i, ""))
@@ -151,16 +105,12 @@ async function nativeScrapeMovie(movieUrl) {
     buttonJobs.push(
       (async () => {
         try {
-          const pageRes = await axios.get(rawLink, {
-            httpsAgent: sslAgent,
-            headers: {
-              ...defaultHeaders,
-              Referer: movieUrl,
-              Host: new URL(rawLink).host,
-            },
-            timeout: 12000,
+          const pageRes = await gotScraping({
+            url: rawLink,
+            headers: { Referer: movieUrl },
+            timeout: { request: 12000 }
           });
-          const pData = String(pageRes.data || "");
+          const pData = String(pageRes.body || "");
           const pathMatch = pData.match(
             /(?:https?:\/\/(?:google\.com|sonic-cloud\.online|drive\.csplayer2\.space))?\/(server\d+\/[^\s'"<>]+\.mp4)/i
           );
@@ -189,7 +139,7 @@ async function nativeScrapeMovie(movieUrl) {
   return { title, downloadLinks };
 }
 
-/* ================= 3. DIRECT DOWNLOAD RESOLVER ================= */
+/* ================= 3. DIRECT DOWNLOAD RESOLVER (WAF BYPASSED) ================= */
 async function resolveDirectLinks(streamUrl) {
   let targetLink = streamUrl.replace(/^https:\/\/[^\/]+/, "https://drive.csplayer2.space");
   targetLink = targetLink.replace(/(server\d+\/)\d+:\//, "$1");
@@ -217,16 +167,11 @@ async function resolveDirectLinks(streamUrl) {
       const domain = parsedUrl.origin;
       const currentPath = parsedUrl.pathname + parsedUrl.search;
 
-      const baseHeaders = {
-        ...defaultHeaders,
-        Host: parsedUrl.host,
-        Referer: "https://cinesubz.co/", // Important to bypass 403
-      };
-
-      const initialRes = await axios.get(movieUrl, {
-        httpsAgent: sslAgent,
-        headers: baseHeaders,
-        timeout: 12000,
+      // 1. Initial Access to generate Cloudflare Cookies
+      const initialRes = await gotScraping({
+        url: movieUrl,
+        headers: { Referer: "https://cinesubz.co/" },
+        timeout: { request: 12000 }
       });
 
       let cookieHeader = "";
@@ -236,24 +181,24 @@ async function resolveDirectLinks(streamUrl) {
           .join("; ");
       }
 
-      let html = String(initialRes.data || "");
+      let html = String(initialRes.body || "");
       let realPageUrl = movieUrl;
       const hexRegex = /[0-9a-fA-F]{200,}/g;
       let payloads = html.match(hexRegex) || [];
 
+      // 2. Download-Data API Call
       if (payloads.length === 0) {
         const apiUrl = `${domain}/api/download-data${currentPath}`;
         try {
-          const apiResponse = await axios.get(apiUrl, {
-            httpsAgent: sslAgent,
-            timeout: 12000,
+          const apiResponse = await gotScraping({
+            url: apiUrl,
             headers: {
-              ...baseHeaders,
               Accept: "application/json, text/plain, */*",
               Referer: movieUrl,
               Cookie: cookieHeader,
-              "Sec-Fetch-Site": "same-origin",
             },
+            responseType: 'json',
+            timeout: { request: 12000 }
           });
 
           if (apiResponse.headers["set-cookie"]) {
@@ -263,62 +208,55 @@ async function resolveDirectLinks(streamUrl) {
             cookieHeader = cookieHeader ? `${cookieHeader}; ${apiCookies}` : apiCookies;
           }
 
-          if (apiResponse.data && apiResponse.data.redirect) {
-            realPageUrl = apiResponse.data.redirect;
+          if (apiResponse.body && apiResponse.body.redirect) {
+            realPageUrl = apiResponse.body.redirect;
             if (!realPageUrl.startsWith("http")) realPageUrl = domain + realPageUrl;
 
-            const pageResponse = await axios.get(realPageUrl, {
-              httpsAgent: sslAgent,
-              timeout: 12000,
+            const pageResponse = await gotScraping({
+              url: realPageUrl,
               headers: {
-                ...baseHeaders,
                 Referer: movieUrl,
                 Cookie: cookieHeader,
               },
+              timeout: { request: 12000 }
             });
-            html = String(pageResponse.data || "");
+            html = String(pageResponse.body || "");
             payloads = html.match(hexRegex) || [];
           }
         } catch (apiErr) {
-          debugLogs.push(`Server #${serverNum} API error: ${apiErr.response?.status || apiErr.message}`);
+          debugLogs.push(`Server #${serverNum} API error: ${apiErr.response?.statusCode || apiErr.message}`);
           continue;
         }
       }
 
       if (payloads.length === 0) continue;
 
+      // Collect Keys
       const allStrings = [...html.matchAll(/(["'])(.*?)\1/g)].map((m) => m[2]);
       const keysToTry = [...new Set(allStrings)].filter((k) => k && k.length >= 4 && k.length <= 40);
       keysToTry.push("kasun", "cinesubz.lk", "CSPlayer", "ravindu01manoj", "jhutmupd", "dgpjjitp");
 
       const resolved = [];
 
+      // 3. Post Binary Payloads
       for (const hexPayload of payloads) {
         try {
           const payloadBytes = Buffer.from(hexPayload, "hex");
-          const postHeaders = {
-            "User-Agent": defaultHeaders["User-Agent"],
-            Accept: "*/*",
-            "Accept-Language": "en-US,en;q=0.9",
-            Connection: "keep-alive",
-            "Content-Type": "application/octet-stream",
-            Cookie: cookieHeader,
-            Origin: domain,
-            Referer: realPageUrl,
-            Host: parsedUrl.host,
-            "Sec-Fetch-Dest": "empty",
-            "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Site": "same-origin",
-          };
-
-          const dlResponse = await axios.post(realPageUrl, payloadBytes, {
-            httpsAgent: sslAgent,
-            headers: postHeaders,
-            responseType: "arraybuffer",
-            timeout: 12000,
+          
+          const dlResponse = await gotScraping({
+            url: realPageUrl,
+            method: 'POST',
+            body: payloadBytes,
+            headers: {
+              "Content-Type": "application/octet-stream",
+              Referer: realPageUrl,
+              Cookie: cookieHeader,
+            },
+            responseType: "buffer",
+            timeout: { request: 12000 }
           });
 
-          const responseText = Buffer.from(dlResponse.data).toString("utf8");
+          const responseText = dlResponse.body.toString("utf8");
           const encryptedUrlMatch = responseText.match(/U2FsdGVkX1[a-zA-Z0-9+/=]+/);
 
           if (encryptedUrlMatch) {
@@ -342,7 +280,7 @@ async function resolveDirectLinks(streamUrl) {
               } catch (_) {}
             }
           }
-        } catch (_) {} // Skip payload 404s
+        } catch (_) {} 
       }
 
       if (resolved.length > 0) {
@@ -354,7 +292,7 @@ async function resolveDirectLinks(streamUrl) {
         };
       }
     } catch (err) {
-      debugLogs.push(`Server #${serverNum} failed: ${err.response?.status || err.message}`);
+      debugLogs.push(`Server #${serverNum} failed: ${err.response?.statusCode || err.message}`);
     }
   }
 
@@ -410,5 +348,5 @@ app.post("/api/resolve", async (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`🚀 CineSubz Railway Resolver active on port ${port}`);
+  console.log(`🚀 CineSubz WAF-Bypass Web App active on port ${port}`);
 });
