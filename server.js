@@ -100,33 +100,47 @@ async function scrapeQualities(movieUrl) {
   return { title, downloadLinks };
 }
 
-/* ================= 3. RESOLVE USING PUPPETEER-REAL-BROWSER ================= */
+/* ================= 3. RESOLVE USING PUPPETEER-REAL-BROWSER (DEEP LOGGING) ================= */
 async function resolveViaRealBrowser(streamUrl) {
   let targetLink = streamUrl.replace(/^https:\/\/[^\/]+/, "https://drive.csplayer2.space");
   
-  const logs = [`[PRB] Starting puppeteer-real-browser for: ${targetLink}`];
+  const logs = [`[PRB] Starting Browser Engine for: ${targetLink}`];
   let browserInstance = null;
   const discoveredLinks = [];
 
   try {
-    logs.push("Launching browser with Xvfb and Turnstile bypass...");
+    logs.push("[PRB] Initializing Real Browser & Xvfb Display...");
     
-    // Connect handles headless bypass automatically
     const { browser, page } = await connect({
-      headless: false, // MUST be false for real-browser to bypass Cloudflare correctly (Xvfb is used on Linux)
-      turnstile: true, // Automatically clicks Turnstile Cloudflare check
-      disableXvfb: false, // Ensure virtual display is enabled for Railway Linux
+      headless: false, // Essential for WAF Bypass
+      turnstile: true, // Auto bypass Turnstile
+      disableXvfb: false, // Virtual display on Linux
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-accelerated-2d-canvas',
         '--disable-gpu',
-        '--mute-audio'
+        '--mute-audio',
+        '--window-size=1280,720'
       ]
     });
     
     browserInstance = browser;
+    logs.push("✅ Browser launched successfully!");
+
+    // Catch Browser Console Logs
+    page.on('console', msg => {
+      const text = msg.text();
+      if (!text.includes('ERR_BLOCKED_BY_CLIENT') && !text.includes('favicon')) {
+        logs.push(`[BROWSER CONSOLE] ${msg.type().toUpperCase()}: ${text}`);
+      }
+    });
+
+    // Catch Page Errors
+    page.on('pageerror', err => {
+      logs.push(`[BROWSER JS ERROR] ${err.toString()}`);
+    });
 
     // Block DisableDevtool JS from kicking out the scraper
     await page.evaluateOnNewDocument(() => {
@@ -135,9 +149,9 @@ async function resolveViaRealBrowser(streamUrl) {
 
     // Intercept Network Requests to catch the Decrypted Stream Link
     await page.setRequestInterception(true);
+    
     page.on('request', request => {
       const url = request.url();
-      // Catch Cloudflare R2 links or fallback Telegram links
       if (
         (url.includes("cloudflarestorage.com") && url.includes(".mp4")) ||
         url.includes("terracloud") ||
@@ -145,36 +159,52 @@ async function resolveViaRealBrowser(streamUrl) {
         url.includes("telegram.me") || 
         url.includes("t.me")
       ) {
-        logs.push(`✅ Captured Final Link: ${url}`);
+        logs.push(`✅ [INTERCEPTED] Final Direct Link: ${url}`);
         discoveredLinks.push({ url });
       }
       request.continue();
     });
 
-    logs.push("Navigating to target and waiting for Cloudflare...");
+    page.on('requestfailed', request => {
+      const url = request.url();
+      const error = request.failure()?.errorText;
+      if (url.includes('drive.csplayer') || url.includes('cinesubz')) {
+        logs.push(`⚠️ [NET_FAIL] ${url} - ${error}`);
+      }
+    });
+
+    logs.push("🌐 Navigating to Target URL...");
     await page.goto(targetLink, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    logs.push("🌐 Page Loaded. Waiting for Cloudflare Validation...");
 
-    logs.push("Triggering JavaScript Decryption events...");
+    // Wait for JS execution and Turnstile validation
+    await new Promise(resolve => setTimeout(resolve, 8000));
 
-    // Give Cloudflare Turnstile a few seconds to pass if challenged
-    await new Promise(resolve => setTimeout(resolve, 5000));
+    logs.push("🔍 Searching for Direct Download Buttons...");
 
-    // Find all direct download buttons and click them to trigger the internal Protobuf API
+    // Find all direct download buttons
     const buttons = await page.$$('.direct-download, .telegram-download');
+    
     if (buttons.length === 0) {
-       logs.push("⚠️ No download buttons found on page. Cloudflare challenge might have failed.");
+       logs.push("❌ No download buttons found! Possible Cloudflare block or Dead Link.");
+       const pageHTML = await page.evaluate(() => document.body.innerHTML.substring(0, 300));
+       logs.push(`[PAGE PREVIEW]: ${pageHTML}...`);
     } else {
-       for (const btn of buttons) {
+       logs.push(`✅ Found ${buttons.length} Download Buttons. Attempting Click...`);
+       for (let i = 0; i < buttons.length; i++) {
          try {
-           await btn.click();
-           await new Promise(r => setTimeout(r, 1500)); 
-         } catch (e) {}
+           logs.push(`🖱️ Clicking Button #${i + 1}...`);
+           await buttons[i].click();
+           await new Promise(r => setTimeout(r, 2000)); 
+         } catch (e) {
+           logs.push(`⚠️ Click failed on Button #${i + 1}: ${e.message}`);
+         }
        }
     }
 
     await browserInstance.close();
+    logs.push("🚪 Browser closed.");
 
-    // Unique links only
     const uniqueLinks = Array.from(new Set(discoveredLinks.map(l => l.url))).map(url => ({ url }));
 
     if (uniqueLinks.length > 0) {
@@ -187,7 +217,7 @@ async function resolveViaRealBrowser(streamUrl) {
     if (browserInstance) {
         try { await browserInstance.close(); } catch(e){}
     }
-    logs.push(`PRB Error: ${error.message}`);
+    logs.push(`❌ [FATAL PRB ERROR]: ${error.message}`);
     return { success: false, error: error.message, logs };
   }
 }
