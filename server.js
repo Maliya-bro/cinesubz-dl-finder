@@ -1,5 +1,6 @@
 import express from "express";
 import { gotScraping } from "got-scraping";
+import { CookieJar } from "tough-cookie";
 import CryptoJS from "crypto-js";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -29,7 +30,7 @@ async function nativeSearchCineSubz(query) {
   const formattedQuery = encodeURIComponent(query.trim()).replace(/%20/g, "+");
   const searchUrl = `https://cinesubz.co/?s=${formattedQuery}`;
 
-  // gotScraping automatically spoofs JA3 TLS and Chrome HTTP/2 headers
+  // Let gotScraping handle all headers, TLS, and HTTP/2 automatically
   const res = await gotScraping({
     url: searchUrl,
     headers: { Referer: "https://cinesubz.co/" },
@@ -66,7 +67,7 @@ async function nativeSearchCineSubz(query) {
   return results;
 }
 
-/* ================= 2. NATIVE MOVIE PAGE SCRAPER ================= */
+/* ================= 2. MOVIE PAGE SCRAPER ================= */
 async function nativeScrapeMovie(movieUrl) {
   const parsed = new URL(movieUrl);
   const movieHost = parsed.origin;
@@ -142,25 +143,25 @@ async function nativeScrapeMovie(movieUrl) {
 /* ================= 3. DIRECT DOWNLOAD RESOLVER (WAF BYPASSED) ================= */
 async function resolveDirectLinks(streamUrl) {
   let targetLink = streamUrl.replace(/^https:\/\/[^\/]+/, "https://drive.csplayer2.space");
-  targetLink = targetLink.replace(/(server\d+\/)\d+:\//, "$1");
 
   const serverMatch = targetLink.match(/\/server(\d+)\//) || targetLink.match(/server(\d+)/);
   const detectedServer = serverMatch ? serverMatch[1] : "7";
 
-  const serversToTry = [detectedServer];
-  ["7", "2", "1", "3", "4", "5", "6", "8", "9", "11", "21"].forEach((s) => {
-    if (!serversToTry.includes(s)) serversToTry.push(s);
-  });
+  const serversToTry = [detectedServer, "7", "2", "1", "3", "4", "5", "6", "8", "9", "11", "21"];
+  const uniqueServers = [...new Set(serversToTry)];
 
   const debugLogs = [];
 
-  for (const serverNum of serversToTry) {
+  for (const serverNum of uniqueServers) {
     let movieUrl = targetLink;
     if (serverMatch) {
-      movieUrl = movieUrl.replace(/server\d+/, `server${serverNum}`);
+      movieUrl = movieUrl.replace(/\/server\d+\//, `/server${serverNum}/`);
     }
 
     debugLogs.push(`Testing Server #${serverNum} (${movieUrl})`);
+    
+    // CookieJar is crucial for Cloudflare turnstile & session persistency
+    const cookieJar = new CookieJar();
 
     try {
       const parsedUrl = new URL(movieUrl);
@@ -170,21 +171,14 @@ async function resolveDirectLinks(streamUrl) {
       // 1. Initial Access to generate Cloudflare Cookies
       const initialRes = await gotScraping({
         url: movieUrl,
+        cookieJar,
         headers: { Referer: "https://cinesubz.co/" },
         timeout: { request: 12000 }
       });
 
-      let cookieHeader = "";
-      if (initialRes.headers["set-cookie"]) {
-        cookieHeader = initialRes.headers["set-cookie"]
-          .map((c) => c.split(";")[0])
-          .join("; ");
-      }
-
       let html = String(initialRes.body || "");
       let realPageUrl = movieUrl;
-      const hexRegex = /[0-9a-fA-F]{200,}/g;
-      let payloads = html.match(hexRegex) || [];
+      let payloads = html.match(/[0-9a-fA-F]{200,}/g) || [];
 
       // 2. Download-Data API Call
       if (payloads.length === 0) {
@@ -192,21 +186,14 @@ async function resolveDirectLinks(streamUrl) {
         try {
           const apiResponse = await gotScraping({
             url: apiUrl,
+            cookieJar,
             headers: {
               Accept: "application/json, text/plain, */*",
-              Referer: movieUrl,
-              Cookie: cookieHeader,
+              Referer: movieUrl
             },
             responseType: 'json',
             timeout: { request: 12000 }
           });
-
-          if (apiResponse.headers["set-cookie"]) {
-            const apiCookies = apiResponse.headers["set-cookie"]
-              .map((c) => c.split(";")[0])
-              .join("; ");
-            cookieHeader = cookieHeader ? `${cookieHeader}; ${apiCookies}` : apiCookies;
-          }
 
           if (apiResponse.body && apiResponse.body.redirect) {
             realPageUrl = apiResponse.body.redirect;
@@ -214,14 +201,15 @@ async function resolveDirectLinks(streamUrl) {
 
             const pageResponse = await gotScraping({
               url: realPageUrl,
-              headers: {
-                Referer: movieUrl,
-                Cookie: cookieHeader,
-              },
+              cookieJar,
+              headers: { Referer: movieUrl },
               timeout: { request: 12000 }
             });
+            
             html = String(pageResponse.body || "");
-            payloads = html.match(hexRegex) || [];
+            payloads = html.match(/[0-9a-fA-F]{200,}/g) || [];
+          } else {
+             debugLogs.push(`Server #${serverNum} API gave no redirect URL.`);
           }
         } catch (apiErr) {
           debugLogs.push(`Server #${serverNum} API error: ${apiErr.response?.statusCode || apiErr.message}`);
@@ -229,7 +217,10 @@ async function resolveDirectLinks(streamUrl) {
         }
       }
 
-      if (payloads.length === 0) continue;
+      if (payloads.length === 0) {
+        debugLogs.push(`Server #${serverNum}: No Hex Payloads extracted from HTML.`);
+        continue;
+      }
 
       // Collect Keys
       const allStrings = [...html.matchAll(/(["'])(.*?)\1/g)].map((m) => m[2]);
@@ -247,10 +238,11 @@ async function resolveDirectLinks(streamUrl) {
             url: realPageUrl,
             method: 'POST',
             body: payloadBytes,
+            cookieJar,
             headers: {
               "Content-Type": "application/octet-stream",
               Referer: realPageUrl,
-              Cookie: cookieHeader,
+              Origin: domain
             },
             responseType: "buffer",
             timeout: { request: 12000 }
@@ -280,7 +272,7 @@ async function resolveDirectLinks(streamUrl) {
               } catch (_) {}
             }
           }
-        } catch (_) {} 
+        } catch (_) {} // Ignore payload specific errors
       }
 
       if (resolved.length > 0) {
@@ -290,6 +282,8 @@ async function resolveDirectLinks(streamUrl) {
           links: resolved,
           logs: debugLogs,
         };
+      } else {
+        debugLogs.push(`Server #${serverNum}: Decryption failed using all keys.`);
       }
     } catch (err) {
       debugLogs.push(`Server #${serverNum} failed: ${err.response?.statusCode || err.message}`);
@@ -348,5 +342,5 @@ app.post("/api/resolve", async (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`🚀 CineSubz WAF-Bypass Web App active on port ${port}`);
+  console.log(`🚀 CineSubz Railway Web App active on port ${port}`);
 });
